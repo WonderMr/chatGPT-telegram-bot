@@ -44,3 +44,7 @@ venv.bak/
 
 # Cython debug symbols
 cython_debug/
+
+pyvenv.cfg
+
+Include/site/python3.10/greenlet/greenlet.h
