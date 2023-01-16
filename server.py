@@ -2,27 +2,22 @@
 import  json
 import  time
 import  os
-
-import  telegram
-from    playwright.sync_api import sync_playwright
-
-from    playwright_stealth import stealth_sync
-
 import  logging
-
 import  dotenv
 import  nest_asyncio
+import  telegram
+from    telegram            import __version__      as TG_VER
+from    playwright.sync_api import sync_playwright
+from    playwright_stealth  import stealth_sync
+from    utils.googleSearch  import googleSearch
+from    utils.sdAPI         import drawWithStability
+from    functools           import wraps
 
-from    utils.googleSearch import googleSearch
-from    utils.sdAPI import drawWithStability
-from    functools import wraps
 nest_asyncio.apply()
 dotenv.load_dotenv()
 
-from    telegram import __version__ as TG_VER
-
 try:
-    from telegram import __version_info__
+    from telegram           import __version_info__
 except ImportError:
     __version_info__            = (0, 0, 0, 0, 0)  # type: ignore[assignment]
 
@@ -32,46 +27,55 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"{TG_VER} version of this example, "
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
-from    telegram import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMarkup
-
-from    telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-
-from    telegram.helpers import escape, escape_markdown
+from    telegram            import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from    telegram.ext        import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from    telegram.helpers    import escape, escape_markdown
 
 if os.environ.get('TELEGRAM_USER_ID'):
-    users                       = [int(user_id) for user_id in os.environ.get('TELEGRAM_USER_ID').split(",")]
+    users                               = [int(user_id) for user_id in os.environ.get('TELEGRAM_USER_ID').split(",")]
+
+if os.environ.get('TELEGRAM_CHAT_ID'):
+    chats                               = [int(chat_id) for chat_id in os.environ.get('TELEGRAM_CHAT_ID').split(",")]
 
 if os.environ.get('OPEN_AI_EMAIL'):
-    OPEN_AI_EMAIL               = os.environ.get('OPEN_AI_EMAIL')
+    OPEN_AI_EMAIL                       = os.environ.get('OPEN_AI_EMAIL')
 
 if os.environ.get('OPEN_AI_PASSWORD'):
-    OPEN_AI_PASSWORD            = os.environ.get('OPEN_AI_PASSWORD')
+    OPEN_AI_PASSWORD                    = os.environ.get('OPEN_AI_PASSWORD')
 
 # Enable logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logger                          = logging.getLogger(__name__)
+logger                                  = logging.getLogger(__name__)
+PLAY, BROWSER, PAGE                     = "", "", ""
+Started                                 = False
 
-PLAY                            = sync_playwright().start()
+def start_browser():
+    global PLAY, BROWSER, PAGE, Started
+    if Started:
+        PLAY.stop()
+    PLAY                                = sync_playwright().start()
 # Chrome doesn't seem to work in headless, so we use firefox
-BROWSER                         = PLAY.firefox.launch_persistent_context(
-                                    user_data_dir="/tmp/playwright",
-                                    headless=(os.getenv('HEADLESS_BROWSER', 'False') == 'True')
-                                )
-if len(BROWSER.pages) > 0:
-    PAGE                        = BROWSER.pages[0]
-elif len(BROWSER.pages) == 0:
-    PAGE                        = BROWSER.new_page()
-stealth_sync(PAGE)
-
-"""Start the bot."""
-# Create the Application and pass it your bot's token.
-application                     = Application.builder().token(os.environ.get('TELEGRAM_API_KEY')).build()
+    BROWSER                             = PLAY.firefox.launch_persistent_context(
+                                            user_data_dir="/tmp/playwright",
+                                            headless=(os.getenv('HEADLESS_BROWSER', 'False') == 'True')
+                                        )
+    if len(BROWSER.pages) > 0:
+        PAGE                            = BROWSER.pages[0]
+    elif len(BROWSER.pages) == 0:
+        PAGE                            = BROWSER.new_page()
+    stealth_sync(PAGE)
+    Started                             = True
 
 def get_input_box():
-    """Get the child textarea of `PromptTextarea__TextareaWrapper`"""
-    return PAGE.query_selector("textarea")
+    try:
+        ret                             = PAGE.query_selector("textarea")
+    except:
+        pass
+        #start_browser() # вот здесь надо дописать
+        #ret                             = PAGE.query_selector("textarea")
+    return ret
 
 def is_logged_in():
     # See if we have a textarea with data-id="root"
@@ -79,7 +83,7 @@ def is_logged_in():
 
 def send_message(message):
     # Send the message
-    box                         = get_input_box()
+    box                                 = get_input_box()
     box.click()
     box.fill(message)
     box.press("Enter")
@@ -89,31 +93,33 @@ class AtrributeError:
 
 def get_last_message():
     """Get the latest message"""
-    page_elements               = PAGE.query_selector_all("div[class*='request-']")
-    last_element                = page_elements[-1]
-    prose                       = last_element
+    page_elements                       = PAGE.query_selector_all("div[class*='markdown']")
+    if page_elements == 0:
+        return "Something wrong"
+    last_element                        = page_elements[-1]
+    prose                               = last_element
     try:
-        code_blocks             = prose.query_selector_all("pre")
+        code_blocks                     = prose.query_selector_all("pre")
     except Exception as e:
-        response                = 'Server probably disconnected, try running /reload'
+        response                        = 'Server probably disconnected, try running /reload'
         return response
 
     if len(code_blocks) > 0:
         # get all children of prose and add them one by one to respons
-        response                = ""
+        response                        = ""
         for child in prose.query_selector_all('p,pre'):
             print(child.get_property('tagName'))
             if str(child.get_property('tagName')) == "PRE":
-                code_container  = child.query_selector("code")
-                response        += f"\n```\n{escape_markdown(code_container.inner_text(), version=2)}\n```"
+                code_container          = child.query_selector("code")
+                response                += f"\n```\n{escape_markdown(code_container.inner_text(), version=2)}\n```"
             else:
                 #replace all <code>x</code> things with `x`
-                text            = child.inner_html()
-                response        += escape_markdown(text, version=2)
-        response                = response.replace("<code\>", "`")
-        response                = response.replace("</code\>", "`")
+                text                    = child.inner_html()
+                response                += escape_markdown(text, version=2)
+        response                        = response.replace("<code\>", "`")
+        response                        = response.replace("</code\>", "`")
     else:
-        response                = escape_markdown(prose.inner_text(), version=2)
+        response                        = escape_markdown(prose.inner_text(), version=2)
     return response
 
 # create a decorator called auth that receives USER_ID as an argument with wraps
@@ -121,17 +127,21 @@ def auth(users):
     def decorator(func):
         @wraps(func)
         async def wrapper(update, context):
-            if update.effective_user.id in users:
+            if update.effective_chat.id in chats:
+                if str(update.message.text).find("@WonderChatGPT_bot") >= 0:
+                    update.message.text = str.replace(update.message.text, "@WonderChatGPT_bot", "")
+                    await func(update, context)
+            elif update.effective_user.id in users:
                 await func(update, context)
             else:
-                await update.message.reply_text("You are not authorized to use this bot")
+                pass#await update.message.reply_text("You are not authorized to use this bot")
         return wrapper
     return decorator
 
 @auth(users)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
-    user                        = update.effective_user
+    user                                = update.effective_user
     await update.message.reply_html(
         rf"Hi {user.mention_html()}!",
         reply_markup=ForceReply(selective=True),
@@ -180,18 +190,18 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         {update.message.text}
     """)
     await check_loading(update)
-    response                    = get_last_message()
+    response                            = get_last_message()
     # extract prompt from this format [prompt: x]
     if "\[prompt:" in response:
         await application.bot.send_chat_action(update.effective_chat.id, telegram.constants.ChatAction.UPLOAD_PHOTO)
         await respond_with_image(update, response)
 
 async def respond_with_image(update, response):
-    prompt                      = response.split("\[prompt:")[1].split("\]")[0]
+    prompt                              = response.split("\[prompt:")[1].split("\]")[0]
     await update.message.reply_text(f"Generating image with prompt `{prompt.strip()}`",
                                     parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
-    photo, seed                 = await drawWithStability(prompt)
+    photo, seed                         = await drawWithStability(prompt)
     send_message(f"""
         Your image generated a seed of `{seed}`.
         When I ask you for modifications, and you think that I'm talking about the same image, add the seed to your prompt like this: 
@@ -203,7 +213,7 @@ async def respond_with_image(update, response):
 
 @auth(users)
 async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message                     = update.message.text.replace('/browse','')
+    message                             = update.message.text.replace('/browse','')
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
     # answer a quick prompt to chatGPT to ask for google search prompt
     send_message(f"""
@@ -214,10 +224,10 @@ async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         I want you to only reply with the output inside and nothing else. Do no write explanations or anything else. Just the query
     """)
     await check_loading(update)
-    response                    = get_last_message()
+    response                            = get_last_message()
     print(f'Clean response from chatGPT {response}')
-    results                     = googleSearch(response)
-    prompt                      = f"""
+    results                             = googleSearch(response)
+    prompt                              = f"""
     Pretend I was able to run a google search for "{message}" instead of you and I got the following results:
     \"\"\"
     {results}
@@ -227,7 +237,7 @@ async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     send_message(prompt)
     await check_loading(update)
-    response                    = get_last_message()
+    response                            = get_last_message()
     if "\[prompt:" in response:
         await respond_with_image(update, response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
     else:
@@ -239,7 +249,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Send the message to OpenAI
     send_message(update.message.text)
     await check_loading(update)
-    response                    = get_last_message()
+    response                            = get_last_message()
     if "\[prompt:" in response:
         await respond_with_image(update, response)
     else:
@@ -247,21 +257,26 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def check_loading(update):
     #button has an svg of submit, if it's not there, it's likely that the three dots are showing an animation
-    submit_button               = PAGE.query_selector_all("textarea+button")[0]
+    submit_button                       = PAGE.query_selector_all("textarea+button")[0]
     # with a timeout of 90 seconds, created a while loop that checks if loading is done
-    loading                     = submit_button.query_selector_all(".text-2xl")
+    loading                             = submit_button.query_selector_all(".text-2xl")
     #keep checking len(loading) until it's empty or 45 seconds have passed
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
-    start_time                  = time.time()
+    start_time                          = time.time()
+    await application.bot.send_chat_action(update.effective_chat.id, "typing")
     while len(loading) > 0:
-        if time.time() - start_time > 90:
+        if time.time() - start_time > 300:
             break
+        if (time.time() - start_time) % 5 < 1:
+            await application.bot.send_chat_action(update.effective_chat.id, "typing")
+            last_message                = get_last_message()
+            if last_message == "An error occurred. If this issue persists please contact us through our help center at help.openai.com.":
+                start_browser()
         time.sleep(0.5)
-        loading                 = submit_button.query_selector_all(".text-2xl")
-        await application.bot.send_chat_action(update.effective_chat.id, "typing")
+        loading                         = submit_button.query_selector_all(".text-2xl")
 
 
-def start_browser():
+def process_browser():
     PAGE.goto("https://chat.openai.com/")
     if not is_logged_in():
         print("Please log in to OpenAI Chat")
@@ -269,21 +284,21 @@ def start_browser():
         
         PAGE.locator("button", has_text="Log in").click()
 
-        username                = PAGE.locator('input[name="username"]')
+        username                        = PAGE.locator('input[name="username"]')
         username.fill(OPEN_AI_EMAIL)
         username.press("Enter")
 
-        password                = PAGE.locator('input[name="password"]')
+        password                        = PAGE.locator('input[name="password"]')
         password.fill(OPEN_AI_PASSWORD)
         password.press("Enter")
         
         # On first login
         try:
-            next_button         = PAGE.locator("button", has_text="Next")
+            next_button                 = PAGE.locator("button", has_text="Next")
             next_button.click()
-            next_button         = PAGE.locator("button", has_text="Next")
+            next_button                 = PAGE.locator("button", has_text="Next")
             next_button.click()
-            next_button         = PAGE.locator("button", has_text="Done")
+            next_button                 = PAGE.locator("button", has_text="Done")
             next_button.click()
         except:
             pass
@@ -301,5 +316,10 @@ def start_browser():
     # Run the bot until the user presses Ctrl-C
     application.run_polling()
 
+"""Start the bot."""
+# Create the Application and pass it your bot's token.
+application                             = Application.builder().token(os.environ.get('TELEGRAM_API_KEY')).build()
+
 if __name__ == "__main__":
     start_browser()
+    process_browser()
