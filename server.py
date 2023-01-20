@@ -69,13 +69,14 @@ def start_browser():
     Started                             = True
 
 def get_input_box():
-    try:
-        ret                             = PAGE.query_selector("textarea")
-    except:
-        pass
-        #start_browser() # вот здесь надо дописать
-        #ret                             = PAGE.query_selector("textarea")
-    return ret
+    while (PAGE.query_selector("textarea") == None):
+        text_err                        = PAGE.query_selector_all("div[class*='text-red-500']")[-1].query_selector_all("p")[-1].get_property('textContent')
+        if text_err == "An error occurred. If this issue persists please contact us through our help center at help.openai.com.":
+            start_browser()
+            process_browser()
+        else:
+            time.sleep(0.1)
+    return PAGE.query_selector("textarea")
 
 def is_logged_in():
     # See if we have a textarea with data-id="root"
