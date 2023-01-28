@@ -7,3 +7,4 @@ python-telegram-bot==20.0a6
 playwright-stealth==1.0.5
 stability-sdk
 pillow~=9.3.0
+dotenv

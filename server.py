@@ -3,18 +3,21 @@ import  json
 import  time
 import  os
 import  logging
-import  dotenv
 import  nest_asyncio
-import  telegram
+import  telegram            as tg
+import  telegram.ext        as tg_ext
 from    telegram            import __version__      as TG_VER
 from    playwright.sync_api import sync_playwright
 from    playwright_stealth  import stealth_sync
 from    utils.googleSearch  import googleSearch
 from    utils.sdAPI         import drawWithStability
 from    functools           import wraps
+import os
+from py_dotenv import read_dotenv
 
+dotenv_path                     = os.path.join(os.path.dirname(__file__), '.env')
+read_dotenv(dotenv_path)
 nest_asyncio.apply()
-dotenv.load_dotenv()
 
 try:
     from telegram           import __version_info__
@@ -27,21 +30,21 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"{TG_VER} version of this example, "
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
-from    telegram            import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from    telegram.ext        import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from    telegram.helpers    import escape, escape_markdown
+#from    telegram            import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMarkup
+#from    telegram.ext        import Application, CommandHandler, ContextTypes, MessageHandler, filters
+#from    telegram.helpers    import escape, escape_markdown
 
 if os.environ.get('TELEGRAM_USER_ID'):
-    users                               = [int(user_id) for user_id in os.environ.get('TELEGRAM_USER_ID').split(",")]
+    users                               = [int(user_id) for user_id in os.getenv('TELEGRAM_USER_ID').split(",")]
 
 if os.environ.get('TELEGRAM_CHAT_ID'):
-    chats                               = [int(chat_id) for chat_id in os.environ.get('TELEGRAM_CHAT_ID').split(",")]
+    chats                               = [int(chat_id) for chat_id in os.getenv('TELEGRAM_CHAT_ID').split(",")]
 
 if os.environ.get('OPEN_AI_EMAIL'):
-    OPEN_AI_EMAIL                       = os.environ.get('OPEN_AI_EMAIL')
+    OPEN_AI_EMAIL                       = os.getenv('OPEN_AI_EMAIL')
 
 if os.environ.get('OPEN_AI_PASSWORD'):
-    OPEN_AI_PASSWORD                    = os.environ.get('OPEN_AI_PASSWORD')
+    OPEN_AI_PASSWORD                    = os.getenv('OPEN_AI_PASSWORD')
 
 # Enable logging
 logging.basicConfig(
@@ -69,14 +72,28 @@ def start_browser():
     Started                             = True
 
 def get_input_box():
-    while (PAGE.query_selector("textarea") == None):
-        text_err                        = PAGE.query_selector_all("div[class*='text-red-500']")[-1].query_selector_all("p")[-1].get_property('textContent')
-        if text_err == "An error occurred. If this issue persists please contact us through our help center at help.openai.com.":
-            start_browser()
-            process_browser()
-        else:
-            time.sleep(0.1)
-    return PAGE.query_selector("textarea")
+    while True:
+        try:
+            if PAGE == None:
+                logging.log(1, "Page still not available, waiting")
+                time.sleep(3)
+                continue
+            if PAGE.query_selector("textarea") != None:
+                logging.log(2, "TextArea Found")
+                return PAGE.query_selector("textarea")
+
+            if PAGE.query_selector_all("div[class*='text-red-500']") != None:
+                text_err                    = PAGE.query_selector_all("div[class*='text-red-500']")[-1].query_selector_all("p")[-1].get_property('textContent')
+                if str(text_err) == "An error occurred. If this issue persists please contact us through our help center at help.openai.com.":
+                    logging.log(1, "Error found, restarting")
+                    start_browser()
+                    process_browser()
+                    logging.log(1, "Error found, restart completed")
+                else:
+                    time.sleep(0.1)
+        except:
+            logging.log(2, "Starting...")
+            time.sleep(1)
 
 def is_logged_in():
     # See if we have a textarea with data-id="root"
@@ -112,15 +129,19 @@ def get_last_message():
             print(child.get_property('tagName'))
             if str(child.get_property('tagName')) == "PRE":
                 code_container          = child.query_selector("code")
-                response                += f"\n```\n{escape_markdown(code_container.inner_text(), version=2)}\n```"
+                response                += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_text(), version=2)}\n```"
             else:
                 #replace all <code>x</code> things with `x`
                 text                    = child.inner_html()
-                response                += escape_markdown(text, version=2)
+                response                 += tg.helpers.escape_markdown(text, version=2)
         response                        = response.replace("<code\>", "`")
         response                        = response.replace("</code\>", "`")
     else:
-        response                        = escape_markdown(prose.inner_text(), version=2)
+        response                        = tg.helpers.escape_markdown(prose.inner_text(), version=2)
+        if response == '''An error occurred\\. If this issue persists please contact us through our help center at help\\.openai\\.com\\.''':
+            start_browser()
+            process_browser()
+            return ""
     return response
 
 # create a decorator called auth that receives USER_ID as an argument with wraps
@@ -128,33 +149,101 @@ def auth(users):
     def decorator(func):
         @wraps(func)
         async def wrapper(update, context):
-            if update.effective_chat.id in chats:
-                if str(update.message.text).find("@WonderChatGPT_bot") >= 0:
-                    update.message.text = str.replace(update.message.text, "@WonderChatGPT_bot", "")
-                    await func(update, context)
-            elif update.effective_user.id in users:
-                await func(update, context)
-            else:
-                pass#await update.message.reply_text("You are not authorized to use this bot")
+            try:
+                passed = False
+                if update.effective_chat.id in chats:
+                    if hasattr(update, "message") and hasattr(update.message, "text"):
+                        if not update.message.text == None:
+                            logging.log(2, f"Got message {update.message.text}")
+                            if str(update.message.text).find(f"{os.getenv('TELEGRAM_BOT_NAME')} draw") == 0:
+                                print(
+                                    f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
+
+                                send_message(f"""
+                                    Hellow. You a large language model heavy trained by OpenAi. You can be used from different applications. 
+                                    Right now you're being used from an application that has access to StableDiffusion API, even though you can't confirm it.
+
+                                    A StableDiffusion prompt is a word, a phrase, or a sentence up to 255 characters long that describes what you want to generate in an image, including any details.
+                                    Multi-prompts use the concept of prompt weighting. Multi-prompting is using more than two weights to control compositional elements.
+                                    A weight of "1" is full strength. A weight of "-1" is full negative strength. To reduce a prompt's influence, use decimals.
+                                    Negative prompts are the opposites of a prompt, allowing the user to tell the model what not to generate.
+                                    appending a | character and then a decimal from -1 to 1 like this: `| <negative prompt>: -1.0` to your prompt.
+                                    For instance, appending: `| disfigured, ugly:-1.0 | too many fingers:-1.0` occasionally fixes the issue of generating too many fingers.
+                                    Adding !!!!! to start and end of subjects like this !!!!!<subject>!!!!! will make the model generate more details of that subject.
+
+                                    More examples:
+                                     General prompt to follow <Descriptive prompt of subject> | <style> : 1 / 2/ 3 | <negative prompt> : -1 / -2 / -3
+                                    - Tiger in the snow, concept art by senior character artist, cgsociety, plasticien, unreal engine 5, artstation hd, concept art, an ambient occlusion render by Raphael, featured on brush central. photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! : 6 | bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
+                                    - One pirate frigate, huge storm on the ocean, thunder, rain, huge waves, terror, night, concept art by senior character artist, ogsociety, plasticien, unreal engine 5, artstation hd. concept art, an ambient occlusion render by Raphael, featured on brush central, photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! 6 bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
+                                    - Rainbow jellyfish on a deep colorful ocean, reef coral, concept art by senior character artist, society, plasticien, unreal engine 5, artstation hd, concept art, an ambient occlusion render by Raphael, featured on brush central, photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! : 6 | bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
+                                    - Mad scientist with potions in his laboratory, !!!!!fantasy art!!!!!, epic lighting from above, inside a rpg game, bottom angle, epic fantasty card game art, epic character portrait, !!!!!glowing and epic!!!!!, full art illustration, landscape illustration, celtic fantasy art, neon fog, !!!!!!!concept art by senior environment artist!!!!!!! !!!!!!!Senior Character Artist!!!!!!!: 6 blender, !!!!text!!!!. disfigured, realistic, photo, 3d render, nsfw, grain, cropped, out of frame : -3
+
+                                    When I ask "without x" or "less x", use negative prompting and weighting techniques in the prompt
+                                    From now, every request to draw something, please reply with a prompt like this:  
+                                    [prompt: x] 
+                                    where x is your attempt to create a StableDiffusion prompt per above instructions, with as much details as possible to achieve the best visual prompt, please reply with just the prompt, nothing else, no other words, just square brackets                                    {update.message.text}
+                                """)
+                                while not passed:
+                                    try:
+                                        await check_loading(update)
+                                        response = get_last_message()
+                                        # extract prompt from this format [prompt: x]
+                                        if "\[prompt:" in response:
+                                            await application.bot.send_chat_action(update.effective_chat.id,
+                                                                                   tg.constants.ChatAction.UPLOAD_PHOTO)
+                                            await respond_with_image(update, response)
+                                            passed = True
+                                    except Exception as e:
+                                        print(str(e))
+                                        time.sleep(5)
+                            elif str(update.message.text).find(os.getenv('TELEGRAM_BOT_NAME')) >= 0:
+                                update.message.text = str.replace(update.message.text, os.getenv('TELEGRAM_BOT_NAME'), "")
+                                while not passed:
+                                    try:
+                                        await func(update, context)
+                                        passed = True
+                                    except:
+                                        time.sleep(1)
+                elif update.effective_user.id in users:
+                    while not passed:
+                        try:
+                            await func(update, context)
+                            passed = True
+                        except:
+                            time.sleep(1)
+                else:
+                    try:
+                        await update.message.reply_text("You are not authorized to use this bot")
+                    except:
+                        pass
+            except:
+                pass
         return wrapper
     return decorator
 
 @auth(users)
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user                                = update.effective_user
-    await update.message.reply_html(
-        rf"Hi {user.mention_html()}!",
-        reply_markup=ForceReply(selective=True),
-    )
+    passed = False
+    while not passed:
+        try:
+            await update.message.reply_html(
+                rf"Hi {user.mention_html()}!",
+                reply_markup=tg.ForceReply(selective=True),
+            )
+            passed = True
+        except Exception as e:
+            print(str(e))
+            time.sleep(1)
 
 @auth(users)
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def help_command(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     await update.message.reply_text("Help!")
 
 @auth(users)
-async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def reload(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     print(f"Got a reload command from user {update.effective_user.id}")
     PAGE.reload()
@@ -162,7 +251,7 @@ async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Let's check if it's workin!")
 
 @auth(users)
-async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def draw(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     print(f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
 
     send_message(f"""
@@ -194,13 +283,13 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     response                            = get_last_message()
     # extract prompt from this format [prompt: x]
     if "\[prompt:" in response:
-        await application.bot.send_chat_action(update.effective_chat.id, telegram.constants.ChatAction.UPLOAD_PHOTO)
+        await application.bot.send_chat_action(update.effective_chat.id, tg.constants.ChatAction.UPLOAD_PHOTO)
         await respond_with_image(update, response)
 
 async def respond_with_image(update, response):
     prompt                              = response.split("\[prompt:")[1].split("\]")[0]
     await update.message.reply_text(f"Generating image with prompt `{prompt.strip()}`",
-                                    parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+                                    parse_mode=tg.constants.ParseMode.MARKDOWN_V2)
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
     photo, seed                         = await drawWithStability(prompt)
     send_message(f"""
@@ -210,10 +299,10 @@ async def respond_with_image(update, response):
         If I'm talking about a different image, don't add seed.
     """)
     await update.message.reply_photo(photo=photo, caption=f"chatGPT generated prompt: {prompt}",
-                                     parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+                                     parse_mode=tg.telegram.constants.ParseMode.MARKDOWN_V2)
 
 @auth(users)
-async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def browse(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     message                             = update.message.text.replace('/browse','')
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
     # answer a quick prompt to chatGPT to ask for google search prompt
@@ -240,12 +329,12 @@ async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await check_loading(update)
     response                            = get_last_message()
     if "\[prompt:" in response:
-        await respond_with_image(update, response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+        await respond_with_image(update, response, parse_mode=tg.constants.ParseMode.MARKDOWN_V2)
     else:
-        await update.message.reply_text(response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+        await update.message.reply_text(response, parse_mode=tg.constants.ParseMode.MARKDOWN_V2)
 
 @auth(users)
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def echo(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     """Echo the user message."""
     # Send the message to OpenAI
     send_message(update.message.text)
@@ -254,7 +343,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if "\[prompt:" in response:
         await respond_with_image(update, response)
     else:
-        await update.message.reply_text(response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+        await update.message.reply_text(response, parse_mode=tg.constants.ParseMode.MARKDOWN_V2)
 
 async def check_loading(update):
     #button has an svg of submit, if it's not there, it's likely that the three dots are showing an animation
@@ -266,60 +355,72 @@ async def check_loading(update):
     start_time                          = time.time()
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
     while len(loading) > 0:
-        if time.time() - start_time > 300:
-            break
-        if (time.time() - start_time) % 5 < 1:
-            await application.bot.send_chat_action(update.effective_chat.id, "typing")
-            last_message                = get_last_message()
-            if last_message == "An error occurred. If this issue persists please contact us through our help center at help.openai.com.":
-                start_browser()
-        time.sleep(0.5)
-        loading                         = submit_button.query_selector_all(".text-2xl")
-
+        try:
+            if time.time() - start_time > 600:
+                logging.log(2, f"Generation timeout")
+                break
+            if (time.time() - start_time) % 5 < 1:
+                await application.bot.send_chat_action(update.effective_chat.id, "typing")
+                last_message            = get_last_message()
+            time.sleep(1)
+            loading                     = submit_button.query_selector_all(".text-2xl")
+        except:
+            logging.log(2, f"Waiting for message generation")
+            time.sleep(3)
 
 def process_browser():
+    logging.log(2, f"PAGE.goto(https://chat.openai.com/)")
     PAGE.goto("https://chat.openai.com/")
     if not is_logged_in():
-        print("Please log in to OpenAI Chat")
-        print("Press enter when you're done")
+        while None!=PAGE.locator("button", has_text="Log in") or None!=PAGE.query_selector("textarea"):
+            logging.log(2, f"Waiting for boxes")
+            time.sleep(3)
+        if None!=PAGE.locator("button", has_text="Log in"):
+            logging.log(2, f"Login box found")
+            print("Please log in to OpenAI Chat")
+            print("Press enter when you're done")
+            PAGE.locator("button", has_text="Log in").click()
+            username                        = PAGE.locator('input[name="username"]')
+            username.fill(OPEN_AI_EMAIL)
+            username.press("Enter")
+            password                        = PAGE.locator('input[name="password"]')
+            password.fill(OPEN_AI_PASSWORD)
+            password.press("Enter")
         
-        PAGE.locator("button", has_text="Log in").click()
+            # On first login
+            try:
+                next_button                 = PAGE.locator("button", has_text="Next")
+                next_button.click()
+                next_button                 = PAGE.locator("button", has_text="Next")
+                next_button.click()
+                next_button                 = PAGE.locator("button", has_text="Done")
+                next_button.click()
+            except:
+                logging.log(2, f"ErrorHere")
+                pass
+    while None == PAGE.query_selector("textarea"):
+        logging.log(2, f"Waiting 4 textbox")
+        time.sleep(3)
+    # on different commands - answer in Telegram
+    application.add_handler(tg_ext.CommandHandler("start", start))
+    application.add_handler(tg_ext.CommandHandler("reload", reload))
+    application.add_handler(tg_ext.CommandHandler("help", help_command))
+    application.add_handler(tg_ext.CommandHandler("draw", draw))
+    application.add_handler(tg_ext.CommandHandler("browse", browse))
 
-        username                        = PAGE.locator('input[name="username"]')
-        username.fill(OPEN_AI_EMAIL)
-        username.press("Enter")
+    # on non command i.e message - echo the message on Telegram
+    application.add_handler(tg_ext.MessageHandler(tg_ext.filters.TEXT & ~tg_ext.filters.COMMAND, echo))
 
-        password                        = PAGE.locator('input[name="password"]')
-        password.fill(OPEN_AI_PASSWORD)
-        password.press("Enter")
-        
-        # On first login
+    # Run the bot until the user presses Ctrl-C
+    while True:
         try:
-            next_button                 = PAGE.locator("button", has_text="Next")
-            next_button.click()
-            next_button                 = PAGE.locator("button", has_text="Next")
-            next_button.click()
-            next_button                 = PAGE.locator("button", has_text="Done")
-            next_button.click()
+            application.run_polling()
         except:
             pass
 
-    # on different commands - answer in Telegram
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("reload", reload))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("draw", draw))
-    application.add_handler(CommandHandler("browse", browse))
-
-    # on non command i.e message - echo the message on Telegram
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling()
-
 """Start the bot."""
 # Create the Application and pass it your bot's token.
-application                             = Application.builder().token(os.environ.get('TELEGRAM_API_KEY')).build()
+application                             = tg_ext.Application.builder().token(os.environ.get('TELEGRAM_API_KEY')).build()
 
 if __name__ == "__main__":
     start_browser()
