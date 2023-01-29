@@ -1,7 +1,4 @@
-"""Make some requests to OpenAI's chatbot"""
-import debugprint
-
-"""Make some requests to OpenAI's chatbot"""
+import random
 import  json
 import  time
 import  re
@@ -17,8 +14,7 @@ from    playwright_stealth  import stealth_sync
 from    utils.googleSearch  import googleSearch
 from    utils.sdAPI         import drawWithStability
 from    functools           import wraps
-import os
-from py_dotenv import read_dotenv
+from    py_dotenv           import read_dotenv
 
 dotenv_path                     = os.path.join(os.path.dirname(__file__), '.env')
 read_dotenv(dotenv_path)
@@ -138,17 +134,18 @@ def get_last_message():
         return response
     response                            = ""
     for block in code_blocks:
-        if str(block.get_property('tagName')) == "PRE":
+        tagName             = str(block.get_property('tagName'))
+        if "PRE" == tagName:
             code_container  = block.query_selector("code")
             response        += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_text(), version=2)}\n```"
-        elif str(block.get_property('tagName')) == "OL":
+        elif "OL" == tagName:
             text            = block.inner_html()
             number          = 1
             for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
                 li_cleaned  = re.sub(r"\<[^\>]+\>", "", li_text)
                 response    += f'{str(number)}. {li_cleaned}\n'
                 number      += 1
-        elif str(block.get_property('tagName')) == "UL":
+        elif "UL" == tagName:
             text            = block.inner_html()
             for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
                 li_cleaned  = re.sub(r"<[^\>]+", "", li_text)
@@ -182,6 +179,8 @@ def check_perm(update):
             if "?" == str(update.message.text)[-1]\
             and -1 == str.find(update.message.text, "@"):
                 return "Chat"
+            if random.Random().randint(1, 10) * 100 > 60:
+                return "Troll"
         elif update.effective_chat.id not in chats\
         and  update.effective_user.id in users:
             return "User"
@@ -262,6 +261,17 @@ def auth(users):
                 elif "Text" == perm:
                     debug_print(update.message.text)
                     return
+                elif "Troll" == perm:
+                    debug_print(f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{update.message.text} will be trolled',
+                                "telegram")
+                    update.message.text = f'{update.message.text}. Ответь в стиле дерзкого интернет тролля из сетевого чата.'
+                    while True:
+                        try:
+                            await func(update, context)
+                            return
+                        except Exception as e:
+                            debug_print(f'{str(e)}', 'telegram')
+                            time.sleep(1)
                 elif "None" == perm:
                     return
             except Exception as e:
@@ -419,9 +429,7 @@ async def check_loading(update):
         return
 
     submit_button                       = PAGE.query_selector_all("textarea+button")[0]
-    # with a timeout of 90 seconds, created a while loop that checks if loading is done
     loading                             = submit_button.query_selector_all(".text-2xl")
-    #keep checking len(loading) until it's empty or 45 seconds have passed
 
     start_time                          = time.time()
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
@@ -440,7 +448,7 @@ async def check_loading(update):
             submit_button               = PAGE.query_selector_all("textarea+button")[0]
             loading                     = submit_button.query_selector_all(".text-2xl")
             if(len(loading) > 0):
-                time.sleep(1)
+                time.sleep(3)
 
         except:
             debug_print(f"Waiting for message generation", 'playwright')
