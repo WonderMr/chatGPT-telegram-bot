@@ -151,6 +151,7 @@ def get_last_message(reload=False):
                 response        += f'{text}\n'
         response                = response.replace("<code\>", "`")
         response                = response.replace("</code\>", "`")
+        response                = re.sub(r'^"|"$', "", response)
         response                = re.sub(r"[\r*\n]{2,}", "\n", response)
         response                = f"\n```\n{response}```"
     except Exception as e:
@@ -179,7 +180,8 @@ def check_perm(update):
             if "?" == str(update.message.text)[-1]\
             and -1 == str.find(update.message.text, "@"):
                 return "Chat"
-            if random.Random().randint(1, 10) * 100 > 60:
+            if random.Random().randint(1, 10) > 7:
+                #return "None"
                 return "Troll"
         elif update.effective_chat.id not in chats\
         and  update.effective_user.id in users:
@@ -195,10 +197,11 @@ def auth(users):
         @wraps(func)
         async def wrapper(update, context):
             try:
+                debug_print(
+                    f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{str(update.message.text)}',
+                    "telegram")
                 perm                = check_perm(update)
                 if "Chat" == perm:
-                    debug_print(f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{str(update.message.text)}',
-                                "telegram")
                     if str(update.message.text).find(f"{os.getenv('TELEGRAM_BOT_NAME')} draw") == 0:
                         debug_print(f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
                         send_message_to_AI(f"""
@@ -249,8 +252,6 @@ def auth(users):
                                 debug_print(f'Exception : {str(e)}', "telegram")
                                 time.sleep(1)
                 elif "User" == perm:
-                    debug_print(f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{update.message.text}',
-                                "telegram")
                     while True:
                         try:
                             await func(update, context)
@@ -259,12 +260,9 @@ def auth(users):
                             debug_print(f'{str(e)}', 'telegram')
                             time.sleep(1)
                 elif "Text" == perm:
-                    debug_print(update.message.text)
                     return
                 elif "Troll" == perm:
-                    debug_print(f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{update.message.text} will be trolled',
-                                "telegram")
-                    update.message.text = f'Представь, что ты участник группового чата. Ты задира, забияка и тролль. Тебе нужно ответить в своём стиле на сообщение "{update.message.text}"'
+                    update.message.text = f'Забудь предыдущий контекст нашей беседы. Представь, что ты участник группового чата. Ты яростный тролль, очень любищь подкалывать участников чата. Тебе нужно ответить в своём стиле на сообщение из чата "{update.message.text}"'
                     while True:
                         try:
                             await func(update, context)
