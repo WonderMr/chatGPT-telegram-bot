@@ -1,7 +1,10 @@
 """Make some requests to OpenAI's chatbot"""
+import debugprint
+
 """Make some requests to OpenAI's chatbot"""
 import  json
 import  time
+import  re
 import  os
 import  logging
 import  datetime
@@ -92,25 +95,12 @@ def start_browser():
 def get_input_box():
     while True:
         try:
-            if PAGE == None:
-                debug_print("Page still not available, waiting", 'playwrigth')
-                time.sleep(3)
-                continue
-            if PAGE.query_selector("textarea") != None:
+            if  None != PAGE \
+            and None != PAGE.query_selector("textarea"):
                 debug_print("TextArea Found", 'playwrigth')
                 return PAGE.query_selector("textarea")
-
-            if PAGE.query_selector_all("div[class*='text-red-500']") != None:
-                text_err                    = PAGE.query_selector_all("div[class*='text-red-500']")[-1].query_selector_all("p")[-1].get_property('textContent')
-                if str(text_err) == "An error occurred. If this issue persists please contact us through our help center at help.openai.com.":
-                    debug_print("Error found, restarting", 'playwrigth')
-                    start_browser()
-                    debug_print("Process Browse", 'playwrigth')
-                    process_browser()
-                    debug_print("Error found, restart completed", 'playwrigth')
-                else:
-                    time.sleep(0.1)
-                    debug_print("Sleep 0.1", 'playwrigth')
+            debug_print("Page still not available, waiting", 'playwrigth')
+            time.sleep(3)
         except:
             debug_print("Starting...", 'playwrigth')
             time.sleep(1)
@@ -119,13 +109,13 @@ def is_logged_in():
     # See if we have a textarea with data-id="root"
     return get_input_box() is not None
 
-def send_message(message):
+def send_message_to_AI(message):
     # Send the message
     debug_print(f'Processing "{str(message)}" to ChatGPT', "playwright")
     box                                 = get_input_box()
     debug_print(f'Found text box', "playwright")
     box.click()
-    box.fill(message)
+    box.fill(message + " . Ответь на русском языке.")
     box.press("Enter")
     debug_print(f'Message sent', "playwright")
 
@@ -141,36 +131,63 @@ def get_last_message():
     last_element                        = page_elements[-1]
     prose                               = last_element
     try:
-        code_blocks                     = prose.query_selector_all("p, pre")
+        code_blocks                     = prose.query_selector_all("P,UL,OL,PRE")
     except Exception as e:
         debug_print(f'Exception : {str(e)}', "playwright")
         response                        = 'Server probably disconnected, try running /reload'
         return response
-
-    if len(code_blocks) > 0:
-        debug_print("Code block found", "playwright")
-        # get all children of prose and add them one by one to respons
-        response                        = ""
-        for child in prose.query_selector_all('p,pre'):
-            print(child.get_property('tagName'))
-            if str(child.get_property('tagName')) == "PRE":
-                code_container          = child.query_selector("code")
-                response                += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_text(), version=2)}\n```"
-            else:
-                #replace all <code>x</code> things with `x`
-                text                    = child.inner_html()
-                response                 += tg.helpers.escape_markdown(text, version=2)
-        response                        = response.replace("<code\>", "`")
-        response                        = response.replace("</code\>", "`")
-    else:
-        response                        = tg.helpers.escape_markdown(prose.inner_text(), version=2)
-        if response == '''An error occurred\\. If this issue persists please contact us through our help center at help\\.openai\\.com\\.'''\
-        or response == '''Something went wrong, please try reloading the conversation.''':
-            debug_print(f'Error message "{response}" found. Restarting', "playwright")
-            start_browser()
-            process_browser()
-            return ""
+    response                            = ""
+    for block in code_blocks:
+        if str(block.get_property('tagName')) == "PRE":
+            code_container  = block.query_selector("code")
+            response        += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_text(), version=2)}\n```"
+        elif str(block.get_property('tagName')) == "OL":
+            text            = block.inner_html()
+            number          = 1
+            for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
+                li_cleaned  = re.sub(r"\<[^\>]+\>", "", li_text)
+                response    += f'{str(number)}. {li_cleaned}\n'
+                number      += 1
+        elif str(block.get_property('tagName')) == "UL":
+            for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
+                li_cleaned  = re.sub(r"<[^\>]+", "", li_text)
+                response    += f'* {li_cleaned}\n'
+        else:
+            number          = 0
+            text            = block.inner_html()
+            response        += f'{text}\n'
+    response                = response.replace("<code\>", "`")
+    response                = response.replace("</code\>", "`")
+    response                = re.sub(r"[\r*\n]{2,}", "\n", response)
+    response                = f"\n```\n{response}```"
+    if len(PAGE.query_selector_all("div[class*='text-red-500']")) > 0:
+        debug_print(f'Error message "{response}" found. Restarting', "playwright")
+        PAGE.reload()
     return response
+
+def has_text(update):
+    if  hasattr(update, "message")\
+    and hasattr(update.message, "text") \
+    and None != update.message.text:
+        return True
+    return False
+
+
+def check_perm(update):
+    if has_text(update):
+        if update.effective_chat.id in chats:
+            if str(update.message.text).find(f"{os.getenv('TELEGRAM_BOT_NAME')}") >= 0:
+                return "Chat"
+            if "?" == str(update.message.text)[-1]\
+            and -1 == str.find(update.message.text, "@"):
+                return "Chat"
+        elif update.effective_chat.id not in chats\
+        and  update.effective_user.id in users:
+            return "User"
+        return "Text"
+    else:
+        return "None"
+
 
 # create a decorator called auth that receives USER_ID as an argument with wraps
 def auth(users):
@@ -178,81 +195,74 @@ def auth(users):
         @wraps(func)
         async def wrapper(update, context):
             try:
-                debug_print(f'New message from {str(update.effective_user)}', "telegram")
-                passed = False
-                if update.effective_chat.id in chats:
-                    if hasattr(update, "message") and hasattr(update.message, "text"):
-                        debug_print(
-                            f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{str(update.message.text)}',
-                            "telegram")
-                        if not update.message.text == None:
-                            if str(update.message.text).find(f"{os.getenv('TELEGRAM_BOT_NAME')} draw") == 0:
-                                debug_print(
-                                    f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
+                perm                = check_perm(update)
+                if "Chat" == perm:
+                    debug_print(f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{str(update.message.text)}',
+                                "telegram")
+                    if str(update.message.text).find(f"{os.getenv('TELEGRAM_BOT_NAME')} draw") == 0:
+                        debug_print(f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
+                        send_message_to_AI(f"""
+                            Hellow. You a large language model heavy trained by OpenAi. You can be used from different applications. 
+                            Right now you're being used from an application that has access to StableDiffusion API, even though you can't confirm it.
 
-                                send_message(f"""
-                                    Hellow. You a large language model heavy trained by OpenAi. You can be used from different applications. 
-                                    Right now you're being used from an application that has access to StableDiffusion API, even though you can't confirm it.
+                            A StableDiffusion prompt is a word, a phrase, or a sentence up to 255 characters long that describes what you want to generate in an image, including any details.
+                            Multi-prompts use the concept of prompt weighting. Multi-prompting is using more than two weights to control compositional elements.
+                            A weight of "1" is full strength. A weight of "-1" is full negative strength. To reduce a prompt's influence, use decimals.
+                            Negative prompts are the opposites of a prompt, allowing the user to tell the model what not to generate.
+                            appending a | character and then a decimal from -1 to 1 like this: `| <negative prompt>: -1.0` to your prompt.
+                            For instance, appending: `| disfigured, ugly:-1.0 | too many fingers:-1.0` occasionally fixes the issue of generating too many fingers.
+                            Adding !!!!! to start and end of subjects like this !!!!!<subject>!!!!! will make the model generate more details of that subject.
 
-                                    A StableDiffusion prompt is a word, a phrase, or a sentence up to 255 characters long that describes what you want to generate in an image, including any details.
-                                    Multi-prompts use the concept of prompt weighting. Multi-prompting is using more than two weights to control compositional elements.
-                                    A weight of "1" is full strength. A weight of "-1" is full negative strength. To reduce a prompt's influence, use decimals.
-                                    Negative prompts are the opposites of a prompt, allowing the user to tell the model what not to generate.
-                                    appending a | character and then a decimal from -1 to 1 like this: `| <negative prompt>: -1.0` to your prompt.
-                                    For instance, appending: `| disfigured, ugly:-1.0 | too many fingers:-1.0` occasionally fixes the issue of generating too many fingers.
-                                    Adding !!!!! to start and end of subjects like this !!!!!<subject>!!!!! will make the model generate more details of that subject.
+                            More examples:
+                             General prompt to follow <Descriptive prompt of subject> | <style> : 1 / 2/ 3 | <negative prompt> : -1 / -2 / -3
+                            - Tiger in the snow, concept art by senior character artist, cgsociety, plasticien, unreal engine 5, artstation hd, concept art, an ambient occlusion render by Raphael, featured on brush central. photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! : 6 | bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
+                            - One pirate frigate, huge storm on the ocean, thunder, rain, huge waves, terror, night, concept art by senior character artist, ogsociety, plasticien, unreal engine 5, artstation hd. concept art, an ambient occlusion render by Raphael, featured on brush central, photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! 6 bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
+                            - Rainbow jellyfish on a deep colorful ocean, reef coral, concept art by senior character artist, society, plasticien, unreal engine 5, artstation hd, concept art, an ambient occlusion render by Raphael, featured on brush central, photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! : 6 | bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
+                            - Mad scientist with potions in his laboratory, !!!!!fantasy art!!!!!, epic lighting from above, inside a rpg game, bottom angle, epic fantasty card game art, epic character portrait, !!!!!glowing and epic!!!!!, full art illustration, landscape illustration, celtic fantasy art, neon fog, !!!!!!!concept art by senior environment artist!!!!!!! !!!!!!!Senior Character Artist!!!!!!!: 6 blender, !!!!text!!!!. disfigured, realistic, photo, 3d render, nsfw, grain, cropped, out of frame : -3
 
-                                    More examples:
-                                     General prompt to follow <Descriptive prompt of subject> | <style> : 1 / 2/ 3 | <negative prompt> : -1 / -2 / -3
-                                    - Tiger in the snow, concept art by senior character artist, cgsociety, plasticien, unreal engine 5, artstation hd, concept art, an ambient occlusion render by Raphael, featured on brush central. photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! : 6 | bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
-                                    - One pirate frigate, huge storm on the ocean, thunder, rain, huge waves, terror, night, concept art by senior character artist, ogsociety, plasticien, unreal engine 5, artstation hd. concept art, an ambient occlusion render by Raphael, featured on brush central, photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! 6 bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
-                                    - Rainbow jellyfish on a deep colorful ocean, reef coral, concept art by senior character artist, society, plasticien, unreal engine 5, artstation hd, concept art, an ambient occlusion render by Raphael, featured on brush central, photorealism, reimagined by industrial light and magic, rendered in maya, rendered in cinema4d !!!!!Centered composition!!!!! : 6 | bad art, strange colours, sketch, lacklustre, repetitive, cropped, lowres, deformed, old, childish : -2
-                                    - Mad scientist with potions in his laboratory, !!!!!fantasy art!!!!!, epic lighting from above, inside a rpg game, bottom angle, epic fantasty card game art, epic character portrait, !!!!!glowing and epic!!!!!, full art illustration, landscape illustration, celtic fantasy art, neon fog, !!!!!!!concept art by senior environment artist!!!!!!! !!!!!!!Senior Character Artist!!!!!!!: 6 blender, !!!!text!!!!. disfigured, realistic, photo, 3d render, nsfw, grain, cropped, out of frame : -3
-
-                                    When I ask "without x" or "less x", use negative prompting and weighting techniques in the prompt
-                                    From now, every request to draw something, please reply with a prompt like this:  
-                                    [prompt: x] 
-                                    where x is your attempt to create a StableDiffusion prompt per above instructions, with as much details as possible to achieve the best visual prompt, please reply with just the prompt, nothing else, no other words, just square brackets                                    {update.message.text}
-                                """)
-                                while not passed:
-                                    try:
-                                        await check_loading(update)
-                                        response = get_last_message()
-                                        # extract prompt from this format [prompt: x]
-                                        if "\[prompt:" in response:
-                                            await application.bot.send_chat_action(chat_id=update.effective_chat.id,
-                                                                                   action=tg.constants.ChatAction.UPLOAD_PHOTO)
-                                            await respond_with_image(update=update,
-                                                                     response=response)
-                                            passed = True
-                                    except Exception as e:
-                                        print(str(e))
-                                        time.sleep(5)
-                            elif str.find(update.message.text, os.getenv('TELEGRAM_BOT_NAME')) >= 0:
-                                update.message.text = str.replace(update.message.text, os.getenv('TELEGRAM_BOT_NAME'), "")
-                                while not passed:
-                                    try:
-                                        await func(update, context)
-                                        passed = True
-                                    except Exception as e:
-                                        debug_print(f'Exception : {str(e)}', "telegram")
-                                        time.sleep(1)
-                elif update.effective_user.id in users:
-                    debug_print(
-                        f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{update.message.text}',
-                        "telegram")
-                    while not passed:
+                            When I ask "without x" or "less x", use negative prompting and weighting techniques in the prompt
+                            From now, every request to draw something, please reply with a prompt like this:  
+                            [prompt: x] 
+                            where x is your attempt to create a StableDiffusion prompt per above instructions, with as much details as possible to achieve the best visual prompt, please reply with just the prompt, nothing else, no other words, just square brackets                                    {update.message.text}
+                        """)
+                        while True:
+                            try:
+                                await check_loading(update)
+                                response = get_last_message()
+                                # extract prompt from this format [prompt: x]
+                                if "\[prompt:" in response:
+                                    await application.bot.send_chat_action(chat_id=update.effective_chat.id,
+                                                                           action=tg.constants.ChatAction.UPLOAD_PHOTO)
+                                    await respond_with_image(update=update,
+                                                             response=response)
+                                    return
+                            except Exception as e:
+                                debug_print(str(e), "telegram")
+                                time.sleep(5)
+                    else:
+                        update.message.text = str.replace(update.message.text, os.getenv('TELEGRAM_BOT_NAME'), "")
+                        while True:
+                            try:
+                                await func(update, context)
+                                return
+                            except Exception as e:
+                                debug_print(f'Exception : {str(e)}', "telegram")
+                                time.sleep(1)
+                elif "User" == perm:
+                    debug_print(f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{update.message.text}',
+                                "telegram")
+                    while True:
                         try:
                             await func(update, context)
-                            passed = True
-                        except:
+                            return
+                        except Exception as e:
+                            debug_print(f'{str(e)}', 'telegram')
                             time.sleep(1)
-                else:
-                    try:
-                        await update.message.reply_text(text="You are not authorized to use this bot")
-                        debug_print(f'{update.effective_user.id} wants to process {update.message.text}',)
-                    except Exception as e:
-                        debug_print(f'Exception : {str(e)}', "telegram")
+                elif "Text" == perm:
+                    debug_print(update.message.text)
+                    return
+                elif "None" == perm:
+                    return
             except Exception as e:
                 debug_print(f'Exception : {str(e)}', "telegram")
         return wrapper
@@ -290,7 +300,7 @@ async def reload(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -
 async def draw(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     print(f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
 
-    send_message(f"""
+    send_message_to_AI(f"""
         You a large language model trained by OpenAi. You can be used from different applications. 
         Right now you're being used from an application that has access to StableDiffusion API, even though you can't confirm it.
         
@@ -331,7 +341,7 @@ async def respond_with_image(update, response):
     await application.bot.send_chat_action(chat_id=update.effective_chat.id,
                                            action="typing")
     photo, seed                         = await drawWithStability(prompt)
-    send_message(f"""
+    send_message_to_AI(f"""
         Your image generated a seed of `{seed}`.
         When I ask you for modifications, and you think that I'm talking about the same image, add the seed to your prompt like this: 
         [prompt: x | seed: {seed}]
@@ -347,7 +357,7 @@ async def browse(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -
     message                             = update.message.text.replace('/browse','')
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
     # answer a quick prompt to chatGPT to ask for google search prompt
-    send_message(f"""
+    send_message_to_AI(f"""
         If I ask you "{message}" , and you didn't know the answer but had access to google, what would you search for? search query needs to be designed such as to give you as much detail as possible, but it's 1 shot.
         Answer with
         x
@@ -366,7 +376,7 @@ async def browse(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -
     Provide a summary of the new facts in a code block, in markdown format
     Then in another code block, answer the question {message} with the new facts you just learned
     """
-    send_message(prompt)
+    send_message_to_AI(prompt)
     await check_loading(update)
     response                            = get_last_message()
     if "\[prompt:" in response:
@@ -378,24 +388,35 @@ async def browse(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -
 async def echo(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
     """Echo the user message."""
     debug_print(f'Send the message to OpenAI', "telegram")
-    send_message(update.message.text)
+    send_message_to_AI(update.message.text)
     debug_print(f'Wait loading', "telegram")
     await check_loading(update)
-    debug_print(f'Done. Looking 4 answer', "telegram")
-    response                            = get_last_message()
-    debug_print(f'Answer found', "telegram")
-    if "\[prompt:" in response:
-        await respond_with_image(update=update,
-                                 response=response)
-        debug_print(f'Responding with msg', "telegram")
-    else:
-        debug_print(f'Responding with msg', "telegram")
-        await update.message.reply_text(text=response,
-                                        parse_mode=tg.constants.ParseMode.MARKDOWN_V2)
+    try:
+        debug_print(f'Done. Looking 4 answer', "telegram")
+        response                            = get_last_message()
+        debug_print(f'Answer found', "telegram")
+        if "\[prompt:" in response:
+            await respond_with_image(update=update,
+                                    response=response)
+            debug_print(f'Responding with msg', "telegram")
+        else:
+            debug_print(f'Responding with msg', "telegram")
+            await update.message.reply_text(text=response,
+                                            parse_mode=tg.constants.ParseMode.MARKDOWN_V2)
+    except Exception as e:
+        debug_print(f'{str(e)}', "telegram")
 
 async def check_loading(update):
 
     #button has an svg of submit, if it's not there, it's likely that the three dots are showing an animation
+    while   len(PAGE.query_selector_all("textarea+button")) == 0\
+            and len(PAGE.query_selector_all("div[class*='text-red-500']")) == 0:
+        time.sleep(1)
+
+    if len(PAGE.query_selector_all("div[class*='text-red-500']")) > 0:
+        debug_print("Red Alert", "playwright")
+        return
+
     submit_button                       = PAGE.query_selector_all("textarea+button")[0]
     # with a timeout of 90 seconds, created a while loop that checks if loading is done
     loading                             = submit_button.query_selector_all(".text-2xl")
@@ -405,15 +426,21 @@ async def check_loading(update):
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
     while len(loading) > 0:
         try:
-            debug_print(f"Waiting 4 answer", "playwright")
             if time.time() - start_time > 600:
                 debug_print(f"Generation timeout", "playwright")
                 break
-            if (time.time() - start_time) % 5 < 1:
+            if (time.time() - start_time) % 3 < 1:
                 await application.bot.send_chat_action(update.effective_chat.id, "typing")
-                #last_message            = get_last_message()
-            time.sleep(1)
+                last_message            = get_last_message()
+                if len(PAGE.query_selector_all("div[class*='text-red-500']")) > 0:
+                    return last_message
+            if (time.time() - start_time) % 10 < 1:
+                debug_print(f"Waiting 4 answer {time.time() - start_time} seconds", "playwright")
+            submit_button               = PAGE.query_selector_all("textarea+button")[0]
             loading                     = submit_button.query_selector_all(".text-2xl")
+            if(len(loading) > 0):
+                time.sleep(1)
+
         except:
             debug_print(f"Waiting for message generation", 'playwright')
             time.sleep(3)
