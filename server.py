@@ -149,6 +149,7 @@ def get_last_message():
                 response    += f'{str(number)}. {li_cleaned}\n'
                 number      += 1
         elif str(block.get_property('tagName')) == "UL":
+            text            = block.inner_html()
             for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
                 li_cleaned  = re.sub(r"<[^\>]+", "", li_text)
                 response    += f'* {li_cleaned}\n'
