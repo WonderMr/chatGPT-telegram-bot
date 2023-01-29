@@ -180,8 +180,9 @@ def check_perm(update):
             if "?" == str(update.message.text)[-1]\
             and -1 == str.find(update.message.text, "@"):
                 return "Chat"
-            if random.Random().randint(1, 10) > 7:
-                #return "None"
+            rand = random.Random().randint(1, 10)
+            debug_print(f'random seed = {rand}')
+            if  rand > 7:
                 return "Troll"
         elif update.effective_chat.id not in chats\
         and  update.effective_user.id in users:
