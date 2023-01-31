@@ -434,16 +434,16 @@ def get_last_message(reload=False):
                 try:
                     text        = block.inner_text()
                 except Exception as e1:
-                    debug_print(f'{say_my_name()} (inner_text) - {str(e1)}', "playwright")
+                    debug_print(f'(inner_text) - {str(e1)}', "playwright")
                     text        = ""
-                debug_print(f'{say_my_name()} (inner_html) - {str(e)}', "playwright")
+                debug_print(f'(inner_html) - {str(e)}', "playwright")
             tagName             = str(block.get_property('tagName'))
             if "PRE" == tagName:
                 code_container  = block.query_selector("code")
-                response        += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_te1xt(), version=2)}\n```"
+                response        += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_text(), version=2)}\n```"
             elif "OL" == tagName:
                 number          = 1
-                response        += '\n```'
+                response        += '\n```\n'
                 for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
                     li_cleaned  = re.sub(r"\<[^\>]+\>", "", li_text)
                     li_md       = tg.helpers.escape_markdown(li_cleaned, version=2)
@@ -451,7 +451,7 @@ def get_last_message(reload=False):
                     number      += 1
                 response        += '```\n'
             elif "UL" == tagName:
-                response        += '\n```'
+                response        += '\n```\n'
                 for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
                     li_cleaned  = re.sub(r"<[^\>]+", "", li_text)
                     li_md       = tg.helpers.escape_markdown(li_cleaned, version=2)
