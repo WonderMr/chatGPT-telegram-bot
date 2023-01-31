@@ -3,39 +3,20 @@ import  json
 import  time
 import  re
 import  os
+import  sys
 import  logging
 import  datetime
 import  nest_asyncio
-import  telegram            as tg
-import  telegram.ext        as tg_ext
-from    telegram            import __version__      as TG_VER
-from    playwright.sync_api import sync_playwright
-from    playwright_stealth  import stealth_sync
-from    utils.googleSearch  import googleSearch
-from    utils.sdAPI         import drawWithStability
-from    functools           import wraps
-from    py_dotenv           import read_dotenv
-
-dotenv_path                     = os.path.join(os.path.dirname(__file__), '.env')
-read_dotenv(dotenv_path)
-nest_asyncio.apply()
-log_file_name = os.path.abspath(__file__) + ".log"
-debug_filehandle = ""
-
-def debug_print(dp_msg, dp_thread=""):
-    global debug_filehandle
-    dp_dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-    dp_msg = dp_dt + ":::" + dp_thread + ":::" + dp_msg
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if (debug_filehandle):
-        debug_filehandle.write(dp_msg + "\n")
-        debug_filehandle.flush()
-    else: 
-        debug_filehandle = open(log_file_name, 'a', encoding='UTF8')
-        debug_filehandle.write(dp_msg + "\n")
-        debug_filehandle.flush()
-    print(dp_msg)
-
+import  telegram                as tg
+import  telegram.ext            as tg_ext
+import  traceback
+from    telegram                import __version__      as TG_VER
+from    playwright.sync_api     import sync_playwright
+from    playwright_stealth      import stealth_sync
+from    utils.googleSearch      import googleSearch
+from    utils.sdAPI             import drawWithStability
+from    functools               import wraps
+from    py_dotenv               import read_dotenv
 
 try:
     from telegram           import __version_info__
@@ -49,46 +30,53 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
 
-if os.environ.get('TELEGRAM_USER_ID'):
-    users                               = [int(user_id) for user_id in os.getenv('TELEGRAM_USER_ID').split(",")]
-
-if os.environ.get('TELEGRAM_CHAT_ID'):
-    chats                               = [int(chat_id) for chat_id in os.getenv('TELEGRAM_CHAT_ID').split(",")]
-
-if os.environ.get('OPEN_AI_EMAIL'):
-    OPEN_AI_EMAIL                       = os.getenv('OPEN_AI_EMAIL')
-
-if os.environ.get('OPEN_AI_PASSWORD'):
-    OPEN_AI_PASSWORD                    = os.getenv('OPEN_AI_PASSWORD')
-
 # Enable logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logger                                  = logging.getLogger(__name__)
-PLAY, BROWSER, PAGE                     = "", "", ""
-Started                                 = False
+logger                          = logging.getLogger(__name__)
+application                     = None
+PLAY, BROWSER, PAGE             = None, None, None
+Started                         = False
 
-def start_browser():
-    global PLAY, BROWSER, PAGE, Started
-    if Started:
-        debug_print("stopping playwright", "browser")
-        PLAY.stop()
-    debug_print("starting playwright", "browser")
-    PLAY                                = sync_playwright().start()
-# Chrome doesn't seem to work in headless, so we use firefox
-    BROWSER                             = PLAY.firefox.launch_persistent_context(
-                                            user_data_dir="/tmp/playwright",
-                                            headless=(os.getenv('HEADLESS_BROWSER', 'False') == 'True')
-                                        )
-    if len(BROWSER.pages) > 0:
-        PAGE                            = BROWSER.pages[0]
-    elif len(BROWSER.pages) == 0:
-        PAGE                            = BROWSER.new_page()
-    stealth_sync(PAGE)
-    Started                             = True
+dotenv_path                     = os.path.join(os.path.dirname(__file__), '.env')
+read_dotenv(dotenv_path)
+nest_asyncio.apply()
+log_file_name                   = os.path.abspath(__file__) + ".log"
+debug_filehandle                = ""
 
+if os.environ.get('TELEGRAM_USER_ID'):
+    users                       = [int(user_id) for user_id in os.getenv('TELEGRAM_USER_ID').split(",")]
+
+if os.environ.get('TELEGRAM_CHAT_ID'):
+    chats                       = [int(chat_id) for chat_id in os.getenv('TELEGRAM_CHAT_ID').split(",")]
+
+if os.environ.get('OPEN_AI_EMAIL'):
+    OPEN_AI_EMAIL               = os.getenv('OPEN_AI_EMAIL')
+
+if os.environ.get('OPEN_AI_PASSWORD'):
+    OPEN_AI_PASSWORD            = os.getenv('OPEN_AI_PASSWORD')
+
+#===================================================================================
+def debug_print(dp_msg, dp_thread=""):
+#===================================================================================
+    global debug_filehandle
+    stack                       = traceback.extract_stack()
+    dp_dt                       = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+    dp_msg                      = f'{dp_dt}:::{dp_thread}::{format(stack[-2][2])}:{dp_msg}'
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (debug_filehandle):
+        debug_filehandle.write(f'{dp_msg}\n')
+        debug_filehandle.flush()
+    else: 
+        debug_filehandle        = open(log_file_name, 'a', encoding='UTF8')
+        debug_filehandle.write(f'{dp_msg}\n')
+        debug_filehandle.flush()
+    print(dp_msg)
+
+#===================================================================================
 def get_input_box():
+#===================================================================================
     while True:
         try:
             if  None != PAGE \
@@ -101,78 +89,41 @@ def get_input_box():
             debug_print("Starting...", 'playwrigth')
             time.sleep(1)
 
+#===================================================================================
 def is_logged_in():
+#===================================================================================
     # See if we have a textarea with data-id="root"
     return get_input_box() is not None
 
+#===================================================================================
 def send_message_to_AI(message):
+#===================================================================================
     # Send the message
     debug_print(f'Processing "{str(message)}" to ChatGPT', "playwright")
-    box                                 = get_input_box()
+    box                         = get_input_box()
     debug_print(f'Found text box', "playwright")
     box.click()
-    box.fill(message + " . Ответь на русском языке.")
+    box.fill(message + "\n\nОтветь на русском языке.")
     box.press("Enter")
     debug_print(f'Message sent', "playwright")
 
+#===================================================================================
 class AtrributeError:
+#===================================================================================
     pass
 
-def get_last_message(reload=False):
-    debug_print(f'Getting last message', "playwright")
-    page_elements                       = PAGE.query_selector_all("div[class*='markdown']")
-    if page_elements == 0:
-        debug_print("Markdown class elements not found", "playwright")
-        return "Something wrong"
-    last_element                        = page_elements[-1]
-    prose                               = last_element
-    try:
-        code_blocks                     = prose.query_selector_all("P,UL,OL,PRE")
-        response                            = ""
-        for block in code_blocks:
-            tagName             = str(block.get_property('tagName'))
-            if "PRE" == tagName:
-                code_container  = block.query_selector("code")
-                response        += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_text(), version=2)}\n```"
-            elif "OL" == tagName:
-                text            = block.inner_html()
-                number          = 1
-                for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
-                    li_cleaned  = re.sub(r"\<[^\>]+\>", "", li_text)
-                    response    += f'{str(number)}. {li_cleaned}\n'
-                    number      += 1
-            elif "UL" == tagName:
-                text            = block.inner_html()
-                for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
-                    li_cleaned  = re.sub(r"<[^\>]+", "", li_text)
-                    response    += f'* {li_cleaned}\n'
-            else:
-                text            = block.inner_html()
-                response        += f'{text}\n'
-        response                = response.replace("<code\>", "`")
-        response                = response.replace("</code\>", "`")
-        response                = re.sub(r'^"|"$', "", response)
-        response                = re.sub(r"[\r*\n]{2,}", "\n", response)
-        response                = f"\n```\n{response}```"
-    except Exception as e:
-        debug_print(f'Exception : {str(e)}', "playwright")
-        response                        = 'Server probably disconnected, try running /reload'
-        return response
-    if len(PAGE.query_selector_all("div[class*='text-red-500']")) > 0\
-    and reload:
-        debug_print(f'Error message "{response}" found. Restarting', "playwright")
-        PAGE.reload()
-    return response
-
+#===================================================================================
 def has_text(update):
+#===================================================================================
     if  hasattr(update, "message")\
     and hasattr(update.message, "text") \
     and None != update.message.text:
         return True
     return False
 
-
+#===================================================================================
 def check_perm(update):
+#===================================================================================
     if has_text(update):
         if update.effective_chat.id in chats:
             if str(update.message.text).find(f"{os.getenv('TELEGRAM_BOT_NAME')}") >= 0:
@@ -180,9 +131,9 @@ def check_perm(update):
             if "?" == str(update.message.text)[-1]\
             and -1 == str.find(update.message.text, "@"):
                 return "Chat"
-            rand = random.Random().randint(1, 10)
+            rand                = random.Random().randint(1, 10)
             debug_print(f'random seed = {rand}')
-            if  rand > 7:
+            if  rand > 8:
                 return "Troll"
         elif update.effective_chat.id not in chats\
         and  update.effective_user.id in users:
@@ -191,9 +142,9 @@ def check_perm(update):
     else:
         return "None"
 
-
-# create a decorator called auth that receives USER_ID as an argument with wraps
-def auth(users):
+#===================================================================================
+def auth(users): # create a decorator called auth that receives USER_ID as an argument with wraps
+#===================================================================================
     def decorator(func):
         @wraps(func)
         async def wrapper(update, context):
@@ -201,7 +152,7 @@ def auth(users):
                 debug_print(
                     f'{str(update.effective_user.last_name)} {str(update.effective_user.first_name)}({str(update.effective_user.username)})@{str(update.effective_chat.title)}:{str(update.message.text)}',
                     "telegram")
-                perm                = check_perm(update)
+                perm            = check_perm(update)
                 if "Chat" == perm:
                     if str(update.message.text).find(f"{os.getenv('TELEGRAM_BOT_NAME')} draw") == 0:
                         debug_print(f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
@@ -241,7 +192,7 @@ def auth(users):
                                                              response=response)
                                     return
                             except Exception as e:
-                                debug_print(str(e), "telegram")
+                                debug_print(f'{str(e)}', "telegram")
                                 time.sleep(5)
                     else:
                         update.message.text = str.replace(update.message.text, os.getenv('TELEGRAM_BOT_NAME'), "")
@@ -250,7 +201,7 @@ def auth(users):
                                 await func(update, context)
                                 return
                             except Exception as e:
-                                debug_print(f'Exception : {str(e)}', "telegram")
+                                debug_print(f'{str(e)}', "telegram")
                                 time.sleep(1)
                 elif "User" == perm:
                     while True:
@@ -274,40 +225,46 @@ def auth(users):
                 elif "None" == perm:
                     return
             except Exception as e:
-                debug_print(f'Exception : {str(e)}', "telegram")
+                debug_print(f'{str(e)}', "telegram")
         return wrapper
     return decorator
 
+#===================================================================================
 @auth(users)
 async def start(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
+#===================================================================================
     """Send a message when the command /start is issued."""
     user                                = update.effective_user
-    passed = False
+    passed                              = False
     while not passed:
         try:
             await update.message.reply_html(text=rf"Hi {user.mention_html()}!",
                                             reply_markup=tg.ForceReply(selective=True),
             )
-            passed = True
+            passed                      = True
         except Exception as e:
-            debug_print(f'Exception : {str(e)}', "telegram")
+            debug_print(f'{str(e)}', "telegram")
             time.sleep(1)
 
+#===================================================================================
 @auth(users)
-async def help_command(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /help is issued."""
+async def help_command(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None: # """Send a message when the command /help is issued."""
+#===================================================================================
     await update.message.reply_text("Help!")
 
+#===================================================================================
 @auth(users)
-async def reload(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /help is issued."""
+async def reload(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None: #"""Send a message when the command /help is issued."""
+#===================================================================================
     print(f"Got a reload command from user {update.effective_user.id}")
     PAGE.reload()
     await update.message.reply_text("Reloaded the browser!")
     await update.message.reply_text("Let's check if it's workin!")
 
+#===================================================================================
 @auth(users)
 async def draw(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
+#===================================================================================
     print(f"Got a draw command from user {update.effective_user.id} with prompt {update.message.text}")
 
     send_message_to_AI(f"""
@@ -343,7 +300,9 @@ async def draw(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> 
                                                action=tg.constants.ChatAction.UPLOAD_PHOTO)
         await respond_with_image(update, response)
 
+#===================================================================================
 async def respond_with_image(update, response):
+#===================================================================================
     debug_print("got browers query", "telegram")
     prompt                              = response.split("\[prompt:")[1].split("\]")[0]
     await update.message.reply_text(text=f"Generating image with prompt `{prompt.strip()}`"  ,
@@ -361,8 +320,10 @@ async def respond_with_image(update, response):
                                      caption=f"chatGPT generated prompt: {prompt}",
                                      parse_mode=tg.telegram.constants.ParseMode.MARKDOWN_V2)
 
+#===================================================================================
 @auth(users)
 async def browse(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
+#===================================================================================
     debug_print("got browers quert", "telegram")
     message                             = update.message.text.replace('/browse','')
     await application.bot.send_chat_action(update.effective_chat.id, "typing")
@@ -394,16 +355,17 @@ async def browse(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -
     else:
         await update.message.reply_text(response, parse_mode=tg.constants.ParseMode.MARKDOWN_V2)
 
+#===================================================================================
 @auth(users)
 async def echo(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> None:
+#===================================================================================
     """Echo the user message."""
-    debug_print(f'Send the message to OpenAI', "telegram")
-    send_message_to_AI(update.message.text)
-    debug_print(f'Wait loading', "telegram")
-    await check_loading(update)
     try:
-        last_message = get_last_message(True)
+        debug_print(f'Send the message to OpenAI', "telegram")
+        send_message_to_AI(update.message.text)
+        await check_loading(update)
         debug_print(f'Done. Looking 4 answer', "telegram")
+        last_message                    = get_last_message(True)
         debug_print(f'Answer found', "telegram")
         if "\[prompt:" in last_message:
             await respond_with_image(update=update,
@@ -416,9 +378,9 @@ async def echo(update: tg.Update, context: tg_ext.ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         debug_print(f'{str(e)}', "telegram")
 
-async def check_loading(update):
-
-    #button has an svg of submit, if it's not there, it's likely that the three dots are showing an animation
+#===================================================================================
+async def check_loading(update): #button has an svg of submit, if it's not there, it's likely that the three dots are showing an animation
+#===================================================================================
     while   len(PAGE.query_selector_all("textarea+button")) == 0\
             and len(PAGE.query_selector_all("div[class*='text-red-500']")) == 0:
         time.sleep(1)
@@ -436,55 +398,145 @@ async def check_loading(update):
         try:
             if time.time() - start_time > 600:
                 debug_print(f"Generation timeout", "playwright")
-                break
+                return
             if (time.time() - start_time) % 3 < 1:
                 await application.bot.send_chat_action(update.effective_chat.id, "typing")
                 last_message            = get_last_message()
                 if len(PAGE.query_selector_all("div[class*='text-red-500']")) > 0:
-                    return last_message
+                    return last_message if last_message else ""
             if (time.time() - start_time) % 10 < 1:
                 debug_print(f"Waiting 4 answer {time.time() - start_time} seconds", "playwright")
             submit_button               = PAGE.query_selector_all("textarea+button")[0]
             loading                     = submit_button.query_selector_all(".text-2xl")
             if(len(loading) > 0):
                 time.sleep(3)
-        except:
-            debug_print(f"Waiting for message generation", 'playwright')
+        except Exception as e:
+            debug_print(f"{str(e)}", 'playwright')
             time.sleep(3)
 
+#===================================================================================
+def get_last_message(reload=False):
+#===================================================================================
+    try:
+        debug_print(f'Getting last message', "playwright")
+        page_elements           = PAGE.query_selector_all("div[class*='markdown']")
+        if page_elements == 0:
+            debug_print("Markdown class elements not found", "playwright")
+            return "Something wrong"
+        last_element            = page_elements[-1]
+        prose                   = last_element
+        code_blocks             = prose.query_selector_all("P,UL,OL,PRE")
+        response                = ""
+        for block in code_blocks:
+            try:
+                text            = block.inner_html()
+            except Exception as e:
+                try:
+                    text        = block.inner_text()
+                except Exception as e1:
+                    debug_print(f'{say_my_name()} (inner_text) - {str(e1)}', "playwright")
+                    text        = ""
+                debug_print(f'{say_my_name()} (inner_html) - {str(e)}', "playwright")
+            tagName             = str(block.get_property('tagName'))
+            if "PRE" == tagName:
+                code_container  = block.query_selector("code")
+                response        += f"\n```\n{tg.helpers.escape_markdown(code_container.inner_te1xt(), version=2)}\n```"
+            elif "OL" == tagName:
+                number          = 1
+                response        += '\n```'
+                for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
+                    li_cleaned  = re.sub(r"\<[^\>]+\>", "", li_text)
+                    li_md       = tg.helpers.escape_markdown(li_cleaned, version=2)
+                    response    += f'{str(number)}. {li_md}\n'
+                    number      += 1
+                response        += '```\n'
+            elif "UL" == tagName:
+                response        += '\n```'
+                for li_text in re.findall(r'\<li\>[^\<]+\<\/li\>', text):
+                    li_cleaned  = re.sub(r"<[^\>]+", "", li_text)
+                    li_md       = tg.helpers.escape_markdown(li_cleaned, version=2)
+                    response    += f'* {li_md}\n'
+                response        += '```\n'
+            else:
+                li_md           = tg.helpers.escape_markdown(text, version=2)
+                response        += f'{li_md}\n'
+                response        = f"\n```\n{response}```"
+        #response                = response.replace("<code\>", "`")
+        #response                = response.replace("</code\>", "`")
+        response                = re.sub(r'^"|"$', "", response)
+        response                = re.sub(r"[\r*\n]{2,}", "\n", response)
+        if len(PAGE.query_selector_all("div[class*='text-red-500']")) > 0\
+        and reload:
+            debug_print(f'Error message "{response}" found. Restarting', "playwright")
+            process_browser()
+    except Exception as e:
+        debug_print(f'{str(e)}', "playwright")
+        process_browser()
+        return 'Server probably disconnected, try running /reload'
+    return response
+
+#===================================================================================
 def process_browser():
+#===================================================================================
+    global PLAY, BROWSER, PAGE, Started
+    if Started:
+        debug_print("stopping playwright", "browser")
+        PLAY.stop()
+    debug_print("starting playwright", "browser")
+    PLAY                        = sync_playwright().start()
+# Chrome doesn't seem to work in headless, so we use firefox
+    BROWSER                     = PLAY.firefox.launch_persistent_context(
+                                        user_data_dir="/tmp/playwright",
+                                        headless=(os.getenv('HEADLESS_BROWSER', 'False') == 'True')
+                                  )
+    if len(BROWSER.pages) > 0:
+        PAGE                    = BROWSER.pages[0]
+    elif len(BROWSER.pages) == 0:
+        PAGE                    = BROWSER.new_page()
+    stealth_sync(PAGE)
+    Started                     = True
+    
     debug_print(f"https://chat.openai.com/", 'browser')
     PAGE.goto("https://chat.openai.com/")
     if not is_logged_in():
-        while None!=PAGE.locator("button", has_text="Log in") or None!=PAGE.query_selector("textarea"):
+        while None!= PAGE.locator("button", has_text="Log in")\
+        or None!=PAGE.query_selector("textarea"):
             debug_print(f"Waiting for boxes", 'playwrigth')
             time.sleep(3)
-        if None!=PAGE.locator("button", has_text="Log in"):
+        if None != PAGE.locator("button", has_text="Log in"):
             debug_print(f"Login box found", 'playwrigth')
             debug_print("Please log in to OpenAI Chat", 'playwrigth')
             debug_print("Press enter when you're done", 'playwrigth')
             PAGE.locator("button", has_text="Log in").click()
-            username                        = PAGE.locator('input[name="username"]')
+            username             = PAGE.locator('input[name="username"]')
             username.fill(OPEN_AI_EMAIL)
             username.press("Enter")
-            password                        = PAGE.locator('input[name="password"]')
+            password             = PAGE.locator('input[name="password"]')
             password.fill(OPEN_AI_PASSWORD)
             password.press("Enter")
         
             # On first login
             try:
-                next_button                 = PAGE.locator("button", has_text="Next")
+                next_button      = PAGE.locator("button", has_text="Next")
                 next_button.click()
-                next_button                 = PAGE.locator("button", has_text="Next")
+                next_button      = PAGE.locator("button", has_text="Next")
                 next_button.click()
-                next_button                 = PAGE.locator("button", has_text="Done")
+                next_button      = PAGE.locator("button", has_text="Done")
                 next_button.click()
             except Exception as e:
-                debug_print(f"ErrorHere: {str(e)}", 'playwrigth')
+                debug_print(f"{str(e)}", 'playwrigth')
                 pass
     while None == PAGE.query_selector("textarea"):
         debug_print(f"Waiting 4 textbox", 'playwrigth')
         time.sleep(3)
+
+#===================================================================================
+"""Start the bot."""
+#===================================================================================
+# Create the Application and pass it your bot's token.
+def process_telegram():
+    global application
+    application        = tg_ext.Application.builder().token(os.environ.get('TELEGRAM_API_KEY')).build()
     # on different commands - answer in Telegram
     application.add_handler(tg_ext.CommandHandler("start", start))
     application.add_handler(tg_ext.CommandHandler("reload", reload))
@@ -495,18 +547,14 @@ def process_browser():
     # on non command i.e message - echo the message on Telegram
     application.add_handler(tg_ext.MessageHandler(tg_ext.filters.TEXT & ~tg_ext.filters.COMMAND, echo))
 
+#===================================================================================
+if __name__ == "__main__":
+    process_telegram()
+    process_browser()
     # Run the bot until the user presses Ctrl-C
     while True:
         try:
             application.run_polling()
         except Exception as e:
-            debug_print(f'Got exxception:{str(e)}', "telegram")
-
-
-"""Start the bot."""
-# Create the Application and pass it your bot's token.
-application                             = tg_ext.Application.builder().token(os.environ.get('TELEGRAM_API_KEY')).build()
-
-if __name__ == "__main__":
-    start_browser()
-    process_browser()
+            process_telegram()
+            debug_print(f'Telegram exception - {str(e)}', "telegram")
